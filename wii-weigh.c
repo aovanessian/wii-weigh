@@ -9,8 +9,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+/* all measurements reported in centigrams; 20kg threshold */
+#define THRESHOLD 2000
 #define SAMPLES 200
-#define THRESHOLD 20.0
 
 static int terse = 0;
 
@@ -53,10 +54,10 @@ void spawn(char *cmd)
 	free(copy);
 }
 
-static int partition(double *a, int left, int right, int pivot)
+static int partition(int *a, int left, int right, int pivot)
 {
-	double pivot_value = a[pivot];
-	double tmp = a[pivot];
+	int pivot_value = a[pivot];
+	int tmp = a[pivot];
 	a[pivot] = a[right];
 	a[right] = tmp;
 
@@ -77,7 +78,7 @@ static int partition(double *a, int left, int right, int pivot)
 	return store;
 }
 
-static double quickselect(double *a, int left, int right, int k)
+static int quickselect(int *a, int left, int right, int k)
 {
 	while (1) {
 		if (left == right)
@@ -95,15 +96,15 @@ static double quickselect(double *a, int left, int right, int k)
 	}
 }
 
-static double median(double *data, int n)
+static int median(int *data, int n)
 {
 	int z = n >> 1;
 	if (n & 1)
 		return quickselect(data, 0, n - 1, z);
 	n--;
-	double m1 = quickselect(data, 0, n, z - 1);
-	double m2 = quickselect(data, 0, n, z);
-	return (m1 + m2) / 2.0;
+	int m1 = quickselect(data, 0, n, z - 1);
+	int m2 = quickselect(data, 0, n, z);
+	return (m1 + m2) >> 1;
 }
 
 #ifndef SIMULATOR
@@ -131,9 +132,9 @@ static int find_board_device(char *path, size_t len)
 	return -1;
 }
 
-static int read_measurements(int fd, double *out, int max)
+static int read_measurements(int fd, int *out, int max)
 {
-	double tl = -1, tr = -1, bl = -1, br = -1;
+	int tl = -1, tr = -1, bl = -1, br = -1;
 	int count = 0;
 
 	struct input_event ev;
@@ -155,7 +156,7 @@ static int read_measurements(int fd, double *out, int max)
 		}
 
 		if (ev.type == EV_ABS) {
-			double v = ev.value / 100.0;
+			int v = ev.value;
 			switch (ev.code) {
 			case ABS_HAT1X: tl = v; break;
 			case ABS_HAT0X: tr = v; break;
@@ -166,7 +167,7 @@ static int read_measurements(int fd, double *out, int max)
 
 		if (ev.type == EV_SYN && ev.code == SYN_REPORT) {
 			if (tl >= 0 && tr >= 0 && bl >= 0 && br >= 0) {
-				double weight = tl + tr + bl + br;
+				int weight = tl + tr + bl + br;
 
 				if (count == 0 && weight < THRESHOLD)
 					goto reset;
@@ -188,22 +189,26 @@ static int read_measurements(int fd, double *out, int max)
 
 #else  /* SIMULATOR VERSION */
 
-static int read_measurements(int fd_unused, double *out, int max)
+static int sim_random(int max)
+{
+	return rand() / (RAND_MAX / max + 1);
+}
+
+static int read_measurements(int fd_unused, int *out, int max)
 {
 	(void)fd_unused;
 	int count = 0;
-
 	/* simulate light stepping onto board */
-	for (int i = 0; i < 50 && count < max; i++)
-		out[count++] = (rand() % 1000) / 100.0;  /* 0–10 kg */
+	for (int i = 0; i < 15 && count < max; i++)
+		out[count++] = sim_random(1000); /* 0–10 kg */
 
 	/* simulate stable readings */
-	for (int i = 0; i < 100 && count < max; i++)
-		out[count++] = 75.0 + (rand() % 100) / 100.0;  /* 75–76 kg */
+	for (int i = 0; i < 150 && count < max; i++)
+		out[count++] = 6200 + sim_random(500); /* 62-67 kg */
 
 	/* simulate user stepping off */
-	for (int i = 0; i < 30 && count < max; i++)
-		out[count++] = (rand() % 1000) / 100.0;  /* 0–10 kg */
+	for (int i = 0; i < 18 && count < max; i++)
+		out[count++] = sim_random(1000); /* 0–10 kg */
 
 	return count;
 }
@@ -254,7 +259,7 @@ int main(int argc, char **argv)
 	}
 #endif
 
-	double data[SAMPLES];
+	int data[SAMPLES];
 	int n = read_measurements(fd, data, SAMPLES);
 #ifndef SIMULATOR
 	close(fd);
@@ -265,15 +270,15 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
-	double result = median(data, n) + adjust;
+	double result = adjust + median(data, n) / 100.0;
 
-	char buf[64];
-	snprintf(buf, sizeof(buf), "%.1f", result);
+	char buf[16];
+	snprintf(buf, sizeof(buf), "%.2f", result);
 
 	if (terse)
 		puts(buf);
 	else
-		printf("\aDone, weight: %s.\n", buf);
+		printf("\aDone, weight: %skg.\n", buf);
 
 	if (disconnect) {
 		char cmd[256];
