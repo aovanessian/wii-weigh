@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <time.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define SAMPLES 200
@@ -20,6 +20,37 @@ static void debug(const char *msg, int force)
 		puts(msg);
 		fflush(stdout);
 	}
+}
+
+void spawn(char *cmd)
+{
+	char *argv[64];
+	int i = 0;
+	char *copy = strdup(cmd);
+	char *token = strtok(copy, " ");
+	while (token && i < 63) {
+		argv[i++] = token;
+		token = strtok(NULL, " ");
+	}
+	argv[i] = NULL;
+
+	pid_t pid = fork();
+	if (pid < 0) {
+		perror("fork");
+		exit(EXIT_FAILURE);
+	}
+	if (pid == 0) {
+		execvp(argv[0], argv);
+		perror("execvp");
+		exit(EXIT_FAILURE);
+	} else {
+		int status;
+		if (waitpid(pid, &status, 0) < 0) {
+			perror("waitpid");
+			exit(EXIT_FAILURE);
+		}
+	}
+	free(copy);
 }
 
 static int find_board_device(char *path, size_t len)
@@ -210,15 +241,15 @@ int main(int argc, char **argv)
 		char cmd[256];
 		snprintf(cmd, sizeof(cmd),
 				 "bluetoothctl disconnect %s >/dev/null 2>&1", disconnect);
-		system(cmd);
+		spawn(cmd);
 	}
 
 	if (command) {
-		char *expanded;
-		asprintf(&expanded, command, buf);
-		system(expanded);
-		free(expanded);
+		char expanded[256];
+		snprintf(expanded, sizeof(expanded), command, buf);
+		spawn(expanded);
 	}
+
 	exit(EXIT_SUCCESS);
 }
 
