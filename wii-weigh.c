@@ -8,6 +8,7 @@
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <time.h>
 
 /* all measurements reported in centigrams; 20kg threshold */
 #define THRESHOLD 2000
@@ -198,6 +199,7 @@ static int read_measurements(int fd_unused, int *out, int max)
 {
 	(void)fd_unused;
 	int count = 0;
+	srand(time(NULL));
 	/* simulate light stepping onto board */
 	for (int i = 0; i < 15 && count < max; i++)
 		out[count++] = sim_random(1000); /* 0–10 kg */
