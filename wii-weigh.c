@@ -1,0 +1,187 @@
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/input.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <time.h>
+#include <unistd.h>
+
+#define SAMPLES 200
+#define THRESHOLD 20.0
+
+static int terse = 0;
+
+static void debug(const char *msg, int force)
+{
+	if (!terse || force) {
+		puts(msg);
+		fflush(stdout);
+	}
+}
+
+static int find_board_device(char *path, size_t len)
+{
+	for (int i = 0; i < 64; i++) {
+		char dev[64];
+		snprintf(dev, sizeof(dev), "/dev/input/event%d", i);
+
+		int fd = open(dev, O_RDONLY | O_NONBLOCK);
+		if (fd < 0)
+			continue;
+
+		char name[256] = {0};
+		if (ioctl(fd, EVIOCGNAME(sizeof(name)), name) >= 0) {
+			if (strcmp(name, "Nintendo Wii Remote Balance Board") == 0) {
+				strncpy(path, dev, len);
+				close(fd);
+				return 0;
+			}
+		}
+		close(fd);
+	}
+	return -1;
+}
+
+static int cmp_double(const void *a, const void *b)
+{
+	double x = *(double *)a;
+	double y = *(double *)b;
+	return (x > y) - (x < y);
+}
+
+
+static double median(double *data, int n)
+{
+	qsort(data, n, sizeof(double), cmp_double);
+	if (n % 2)
+		return data[n / 2];
+	return (data[n / 2 - 1] + data[n / 2]) / 2.0;
+}
+
+static int read_measurements(int fd, double *out, int max)
+{
+	double tl = -1, tr = -1, bl = -1, br = -1;
+	int count = 0;
+
+	struct input_event ev;
+
+	for (;;) {
+		ssize_t r = read(fd, &ev, sizeof(ev));
+		if (r < 0) {
+			if (errno == EAGAIN) {
+				usleep(1000);
+				continue;
+			}
+			perror("read");
+			break;
+		}
+
+		if (ev.type == EV_KEY && ev.code == BTN_A) {
+			fprintf(stderr, "ERROR: Button pressed, aborting.\n");
+			exit(1);
+		}
+
+		if (ev.type == EV_ABS) {
+			double v = ev.value / 100.0;
+			switch (ev.code) {
+			case ABS_HAT1X: tl = v; break;
+			case ABS_HAT0X: tr = v; break;
+			case ABS_HAT0Y: bl = v; break;
+			case ABS_HAT1Y: br = v; break;
+			}
+		}
+
+		if (ev.type == EV_SYN && ev.code == SYN_REPORT) {
+			if (tl >= 0 && tr >= 0 && bl >= 0 && br >= 0) {
+				double weight = tl + tr + bl + br;
+
+				if (count == 0 && weight < THRESHOLD)
+					goto reset;
+
+				if (count > 0 && weight < THRESHOLD)
+					break;
+
+				out[count++] = weight;
+				if (count >= max)
+					break;
+			}
+		reset:
+			tl = tr = bl = br = -1;
+		}
+	}
+
+	return count;
+}
+
+int main(int argc, char **argv)
+{
+	double adjust = 0.0;
+	const char *command = NULL;
+	const char *disconnect = NULL;
+
+	int opt;
+	while ((opt = getopt(argc, argv, "a:c:d:w")) != -1) {
+		switch (opt) {
+		case 'a': adjust = atof(optarg); break;
+		case 'c': command = optarg; break;
+		case 'd': disconnect = optarg; break;
+		case 'w': terse = 1; break;
+		default:
+			fprintf(stderr, "Usage: %s [-a adjust] [-c cmd] [-d addr] [-w]\n", argv[0]);
+			exit(1);
+		}
+	}
+
+	char device[64];
+	debug("Waiting for balance board...", 0);
+	while (find_board_device(device, sizeof(device)) != 0) {
+		usleep(500000);
+	}
+
+	debug("\aBalance board found, please step on.", 0);
+
+	int fd = open(device, O_RDONLY | O_NONBLOCK);
+	if (fd < 0) {
+		perror("open");
+		exit(EXIT_FAILURE);
+	}
+
+	double data[SAMPLES];
+	int n = read_measurements(fd, data, SAMPLES);
+	close(fd);
+
+	if (n <= 0) {
+		fprintf(stderr, "ERROR: No valid data collected.\n");
+		exit(EXIT_FAILURE);
+	}
+
+	double result = median(data, n) + adjust;
+
+	char buf[64];
+	snprintf(buf, sizeof(buf), "%.1f", result);
+
+	if (terse)
+		puts(buf);
+	else {
+		printf("\aDone, weight: %s.\n", buf);
+	}
+
+	if (disconnect) {
+		char cmd[256];
+		snprintf(cmd, sizeof(cmd),
+				 "bluetoothctl disconnect %s >/dev/null 2>&1", disconnect);
+		system(cmd);
+	}
+
+	if (command) {
+		char *expanded;
+		asprintf(&expanded, command, buf);
+		system(expanded);
+		free(expanded);
+	}
+	exit(EXIT_SUCCESS);
+}
+
