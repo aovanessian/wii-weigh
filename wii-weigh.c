@@ -53,29 +53,6 @@ void spawn(char *cmd)
 	free(copy);
 }
 
-static int find_board_device(char *path, size_t len)
-{
-	for (int i = 0; i < 64; i++) {
-		char dev[64];
-		snprintf(dev, sizeof(dev), "/dev/input/event%d", i);
-
-		int fd = open(dev, O_RDONLY | O_NONBLOCK);
-		if (fd < 0)
-			continue;
-
-		char name[256] = {0};
-		if (ioctl(fd, EVIOCGNAME(sizeof(name)), name) >= 0) {
-			if (strcmp(name, "Nintendo Wii Remote Balance Board") == 0) {
-				strncpy(path, dev, len);
-				close(fd);
-				return 0;
-			}
-		}
-		close(fd);
-	}
-	return -1;
-}
-
 static int partition(double *a, int left, int right, int pivot)
 {
 	double pivot_value = a[pivot];
@@ -127,6 +104,31 @@ static double median(double *data, int n)
 	double m1 = quickselect(data, 0, n, z - 1);
 	double m2 = quickselect(data, 0, n, z);
 	return (m1 + m2) / 2.0;
+}
+
+#ifndef SIMULATOR
+
+static int find_board_device(char *path, size_t len)
+{
+	for (int i = 0; i < 64; i++) {
+		char dev[64];
+		snprintf(dev, sizeof(dev), "/dev/input/event%d", i);
+
+		int fd = open(dev, O_RDONLY | O_NONBLOCK);
+		if (fd < 0)
+			continue;
+
+		char name[256] = {0};
+		if (ioctl(fd, EVIOCGNAME(sizeof(name)), name) >= 0) {
+			if (strcmp(name, "Nintendo Wii Remote Balance Board") == 0) {
+				strncpy(path, dev, len);
+				close(fd);
+				return 0;
+			}
+		}
+		close(fd);
+	}
+	return -1;
 }
 
 static int read_measurements(int fd, double *out, int max)
@@ -184,6 +186,38 @@ static int read_measurements(int fd, double *out, int max)
 	return count;
 }
 
+#else  /* SIMULATOR VERSION */
+
+static int read_measurements(int fd_unused, double *out, int max)
+{
+	(void)fd_unused;
+	int count = 0;
+
+	/* simulate light stepping onto board */
+	for (int i = 0; i < 50 && count < max; i++)
+		out[count++] = (rand() % 1000) / 100.0;  /* 0–10 kg */
+
+	/* simulate stable readings */
+	for (int i = 0; i < 100 && count < max; i++)
+		out[count++] = 75.0 + (rand() % 100) / 100.0;  /* 75–76 kg */
+
+	/* simulate user stepping off */
+	for (int i = 0; i < 30 && count < max; i++)
+		out[count++] = (rand() % 1000) / 100.0;  /* 0–10 kg */
+
+	return count;
+}
+
+static int find_board_device(char *path, size_t len)
+{
+	(void)path;
+	(void)len;
+	debug("SIMULATOR: pretending balance board found.", 0);
+	return 0;
+}
+
+#endif /* SIMULATOR */
+
 int main(int argc, char **argv)
 {
 	double adjust = 0.0;
@@ -211,15 +245,20 @@ int main(int argc, char **argv)
 
 	debug("\aBalance board found, please step on.", 0);
 
-	int fd = open(device, O_RDONLY | O_NONBLOCK);
+	int fd = -1;
+#ifndef SIMULATOR
+	fd = open(device, O_RDONLY | O_NONBLOCK);
 	if (fd < 0) {
 		perror("open");
 		exit(EXIT_FAILURE);
 	}
+#endif
 
 	double data[SAMPLES];
 	int n = read_measurements(fd, data, SAMPLES);
+#ifndef SIMULATOR
 	close(fd);
+#endif
 
 	if (n <= 0) {
 		fprintf(stderr, "ERROR: No valid data collected.\n");
@@ -233,9 +272,8 @@ int main(int argc, char **argv)
 
 	if (terse)
 		puts(buf);
-	else {
+	else
 		printf("\aDone, weight: %s.\n", buf);
-	}
 
 	if (disconnect) {
 		char cmd[256];
