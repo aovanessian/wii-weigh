@@ -1,11 +1,23 @@
-compile:
-	gcc -O2 -Wall -Wextra -o wii-weigh wii-weigh.c
+CC      ?= gcc
+CFLAGS  ?= -O3 -Wall -Wextra
 
-sim:
-	gcc -O2 -Wall -Wextra -DSIMULATOR -o sim-weigh wii-weigh.c
+.PHONY: all sim strip clean debug
 
-strip:
+all: strip
+
+wii-weigh: wii-weigh.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+sim-weigh: wii-weigh.c
+	$(CC) $(CFLAGS) -DSIMULATOR -o $@ $<
+
+sim: sim-weigh
+
+strip: wii-weigh
 	strip wii-weigh
+
+debug: CFLAGS = -O0 -g -Wall -Wextra
+debug: wii-weigh
 
 clean:
 	rm -f wii-weigh sim-weigh
