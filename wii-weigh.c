@@ -5,54 +5,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
-#include <sys/wait.h>
 #include <unistd.h>
-#include <time.h>
 
-/* all measurements reported in centigrams; 20kg threshold */
-#define THRESHOLD 2000
+#ifdef SIMULATOR
+#include <time.h>
+#endif
+
+/* all measurements reported in centigrams */
+/* 10kg threshold to determine if someone is on the scale */
+#define THRESHOLD 1000
 #define SAMPLES 200
 
-static int terse = 0;
+static int prolix = 1;
 
 static void debug(const char *msg, int force)
 {
-	if (!terse || force) {
+	if (prolix || force) {
 		puts(msg);
 		fflush(stdout);
 	}
-}
-
-void spawn(char *cmd)
-{
-	char *argv[64];
-	int i = 0;
-	char *copy = strdup(cmd);
-	char *token = strtok(copy, " ");
-	while (token && i < 63) {
-		argv[i++] = token;
-		token = strtok(NULL, " ");
-	}
-	argv[i] = NULL;
-
-	pid_t pid = fork();
-	if (pid < 0) {
-		perror("fork");
-		exit(EXIT_FAILURE);
-	}
-	if (pid == 0) {
-		execvp(argv[0], argv);
-		perror("execvp");
-		exit(EXIT_FAILURE);
-	} else {
-		int status;
-		if (waitpid(pid, &status, 0) < 0) {
-			perror("waitpid");
-			exit(EXIT_FAILURE);
-		}
-	}
-	free(copy);
 }
 
 static int partition(int *a, int left, int right, int pivot)
@@ -230,18 +201,14 @@ static int find_board_device(char *path, size_t len)
 int main(int argc, char **argv)
 {
 	double adjust = 0.0;
-	const char *command = NULL;
-	const char *disconnect = NULL;
 
 	int opt;
-	while ((opt = getopt(argc, argv, "a:c:d:w")) != -1) {
+	while ((opt = getopt(argc, argv, "a:w")) != -1) {
 		switch (opt) {
 		case 'a': adjust = atof(optarg); break;
-		case 'c': command = optarg; break;
-		case 'd': disconnect = optarg; break;
-		case 'w': terse = 1; break;
+		case 'w': prolix = 0; break;
 		default:
-			fprintf(stderr, "Usage: %s [-a adjust] [-c cmd] [-d addr] [-w]\n", argv[0]);
+			fprintf(stderr, "Usage: %s [-a adjust] [-w]\n", argv[0]);
 			exit(1);
 		}
 	}
@@ -252,8 +219,6 @@ int main(int argc, char **argv)
 		usleep(500000);
 	}
 
-	debug("\aBalance board found, please step on.", 0);
-
 	int fd = -1;
 #ifndef SIMULATOR
 	fd = open(device, O_RDONLY | O_NONBLOCK);
@@ -262,40 +227,27 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 #endif
-
+	debug("\aBalance board found, please step on.", 0);
 	int data[SAMPLES];
-	int n = read_measurements(fd, data, SAMPLES);
+	int count = read_measurements(fd, data, SAMPLES);
 #ifndef SIMULATOR
 	close(fd);
 #endif
 
-	if (n <= 0) {
+	if (count <= 0) {
 		fprintf(stderr, "ERROR: No valid data collected.\n");
 		exit(EXIT_FAILURE);
 	}
 
-	double result = adjust + median(data, n) / 100.0;
+	double result = adjust + median(data, count) / 100.0;
 
-	char buf[16];
+	char buf[8];
 	snprintf(buf, sizeof(buf), "%.2f", result);
 
-	if (terse)
-		puts(buf);
-	else
+	if (prolix)
 		printf("\aDone, weight: %skg.\n", buf);
-
-	if (disconnect) {
-		char cmd[256];
-		snprintf(cmd, sizeof(cmd),
-				 "bluetoothctl disconnect %s", disconnect);
-		spawn(cmd);
-	}
-
-	if (command) {
-		char expanded[256];
-		snprintf(expanded, sizeof(expanded), command, buf);
-		spawn(expanded);
-	}
+	else
+		puts(buf);
 
 	exit(EXIT_SUCCESS);
 }
