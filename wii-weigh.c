@@ -111,7 +111,7 @@ static double quickselect(double *a, int left, int right, int k)
 
 		if (k == pivot)
 			return a[k];
-		else if (k < pivot)
+		if (k < pivot)
 			right = pivot - 1;
 		else
 			left = pivot + 1;
