@@ -79,32 +79,34 @@ static int partition(int *a, int left, int right, int pivot)
 	return store;
 }
 
-static int quickselect(int *a, int left, int right, int k)
-{
-	while (1) {
-		if (left == right)
-			return a[left];
-
-		int pivot = left + (right - left) / 2;
-		pivot = partition(a, left, right, pivot);
-
-		if (k == pivot)
-			return a[k];
-		if (k < pivot)
-			right = pivot - 1;
-		else
-			left = pivot + 1;
-	}
-}
-
 static int median(int *data, int n)
 {
-	int z = n >> 1;
+	int z = n >> 1;       /* middle index */
+	int lo = 0, hi = n-1;
+
+	while (1) {
+		int pivot = partition(data, lo, hi, lo + (hi-lo)/2);
+
+		if (pivot == z)
+			break;
+		if (z < pivot)
+			hi = pivot - 1;
+		else
+			lo = pivot + 1;
+	}
+
 	if (n & 1)
-		return quickselect(data, 0, n - 1, z);
-	n--;
-	int m1 = quickselect(data, 0, n, z - 1);
-	int m2 = quickselect(data, 0, n, z);
+		return data[z];   /* odd count: middle element */
+
+	/* even count: find the other middle element */
+	int m1 = data[z];       /* upper median */
+	int m2 = data[0];       /* init to first element in the array */
+
+	for (int i = 0; i < z; i++) {
+		if (data[i] > m2)
+			m2 = data[i];  /* largest element among lower half */
+	}
+
 	return (m1 + m2) >> 1;
 }
 
@@ -285,7 +287,7 @@ int main(int argc, char **argv)
 	if (disconnect) {
 		char cmd[256];
 		snprintf(cmd, sizeof(cmd),
-				 "bluetoothctl disconnect %s >/dev/null 2>&1", disconnect);
+				 "bluetoothctl disconnect %s", disconnect);
 		spawn(cmd);
 	}
 
