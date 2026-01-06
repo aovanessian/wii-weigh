@@ -45,20 +45,57 @@ static int find_board_device(char *path, size_t len)
 	return -1;
 }
 
-static int cmp_double(const void *a, const void *b)
+static int partition(double *a, int left, int right, int pivot)
 {
-	double x = *(double *)a;
-	double y = *(double *)b;
-	return (x > y) - (x < y);
+	double pivot_value = a[pivot];
+	double tmp = a[pivot];
+	a[pivot] = a[right];
+	a[right] = tmp;
+
+	int store = left;
+	for (int i = left; i < right; i++) {
+		if (a[i] < pivot_value) {
+			tmp = a[store];
+			a[store] = a[i];
+			a[i] = tmp;
+			store++;
+		}
+	}
+
+	tmp = a[right];
+	a[right] = a[store];
+	a[store] = tmp;
+
+	return store;
 }
 
+static double quickselect(double *a, int left, int right, int k)
+{
+	while (1) {
+		if (left == right)
+			return a[left];
+
+		int pivot = left + (right - left) / 2;
+		pivot = partition(a, left, right, pivot);
+
+		if (k == pivot)
+			return a[k];
+		else if (k < pivot)
+			right = pivot - 1;
+		else
+			left = pivot + 1;
+	}
+}
 
 static double median(double *data, int n)
 {
-	qsort(data, n, sizeof(double), cmp_double);
-	if (n % 2)
-		return data[n / 2];
-	return (data[n / 2 - 1] + data[n / 2]) / 2.0;
+	int z = n >> 1;
+	if (n & 1)
+		return quickselect(data, 0, n - 1, z);
+	n--;
+	double m1 = quickselect(data, 0, n, z - 1);
+	double m2 = quickselect(data, 0, n, z);
+	return (m1 + m2) / 2.0;
 }
 
 static int read_measurements(int fd, double *out, int max)
